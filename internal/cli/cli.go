@@ -7,14 +7,22 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
 	"io/fs"
+	"os"
+	"os/signal"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"syscall"
 
 	"goforge"
 	"goforge/internal/config"
 	"goforge/internal/generator"
+	"goforge/internal/process"
 	"goforge/internal/project"
 )
 
@@ -29,7 +37,7 @@ const (
 // version is overridden at build time with:
 //
 //	go build -ldflags "-X goforge/internal/cli.version=v1.2.3"
-var version = "0.6.0"
+var version = "0.7.0"
 
 const usage = `goforge is a scaffold for Go backend services.
 
@@ -39,6 +47,7 @@ Usage:
 Commands:
   new        create a new project skeleton
   generate   generate handler/service/repository code into the current project
+  dev        run the current project's server (go run ./cmd/server)
   version    print the goforge version
   help       show this help
 
@@ -77,6 +86,8 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return runNew(args[1:], stdout, stderr)
 	case args[0] == "generate":
 		return runGenerate(args[1:], stdout, stderr)
+	case args[0] == "dev":
+		return runDev(args[1:], stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "goforge: unknown command %q\n\n", args[0])
 		fmt.Fprint(stderr, usage)
@@ -177,4 +188,107 @@ func runGenerate(args []string, stdout, stderr io.Writer) int {
 	}
 	fmt.Fprintf(stdout, "created %s\n", path)
 	return ExitOK
+}
+
+// runDev handles "goforge dev [--port N]": run the current project's
+// server as a child process, stream its output, and forward Ctrl+C.
+func runDev(args []string, stdout, stderr io.Writer) int {
+	// Ctrl+C / SIGTERM cancel ctx, which interrupts the child
+	// gracefully (SIGINT, then SIGKILL after the grace period —
+	// see internal/process).
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	return runDevContext(ctx, args, stdout, stderr)
+}
+
+// runDevContext is the testable core of dev: it takes its context as
+// a parameter instead of installing signal handlers, so tests can
+// cancel it directly.
+func runDevContext(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	port, ok := parseDevPort(args, stderr)
+	if !ok {
+		return ExitUsage
+	}
+
+	// Unlike generate (which only warns), dev is the command whose
+	// whole behavior is configured: a broken goforge.yaml is fatal here.
+	cfg, err := config.Load(".")
+	if err != nil {
+		fmt.Fprintf(stderr, "goforge dev: %v\n", err)
+		return ExitError
+	}
+	// Precedence: flag > environment > file > default.
+	config.ApplyEnv(&cfg, os.Getenv)
+	if port != 0 {
+		cfg.Server.Port = port
+	}
+
+	// Fail fast with a goforge-shaped message when this is not a
+	// project; without the check the user would see go's raw error.
+	if _, err := os.Stat("go.mod"); err != nil {
+		fmt.Fprintln(stderr, "goforge dev: not inside a goforge project (go.mod not found)")
+		return ExitError
+	}
+	if _, err := os.Stat(filepath.Join("cmd", "server")); err != nil {
+		fmt.Fprintln(stderr, "goforge dev: no cmd/server in this project (is it a goforge project?)")
+		return ExitError
+	}
+
+	fmt.Fprintf(stdout, "starting server on :%d (Ctrl+C to stop)\n", cfg.Server.Port)
+	env := append(os.Environ(), "PORT="+strconv.Itoa(cfg.Server.Port))
+	code, err := process.Run(ctx, "go", []string{"run", "./cmd/server"}, process.Options{
+		Stdin:  os.Stdin,
+		Stdout: stdout,
+		Stderr: stderr,
+		Env:    env,
+	})
+	if err != nil {
+		fmt.Fprintf(stderr, "goforge dev: %v\n", err)
+		return ExitError
+	}
+	if ctx.Err() != nil {
+		// goforge requested the stop (Ctrl+C / SIGTERM). The child's
+		// exit status does not measure graceful shutdown — `go run`
+		// exits 1 or 130 when interrupted, even though the server it
+		// hosts shuts down cleanly. A requested stop is a success.
+		fmt.Fprintln(stdout, "server stopped")
+		return ExitOK
+	}
+	fmt.Fprintf(stdout, "server exited (code %d)\n", code)
+	// Exit-code passthrough: when the child decides to die, its code
+	// is the command's result.
+	return code
+}
+
+// parseDevPort extracts the optional --port flag. Returns 0 when the
+// flag is absent (meaning "no override").
+func parseDevPort(args []string, stderr io.Writer) (int, bool) {
+	raw := ""
+	for i := 0; i < len(args); i++ {
+		switch {
+		case args[i] == "--port":
+			i++
+			if i >= len(args) {
+				fmt.Fprintln(stderr, "goforge dev: --port requires a value")
+				return 0, false
+			}
+			raw = args[i]
+		case strings.HasPrefix(args[i], "--port="):
+			raw = strings.TrimPrefix(args[i], "--port=")
+		default:
+			fmt.Fprintf(stderr, "goforge dev: unknown argument %q\n", args[i])
+			fmt.Fprintln(stderr)
+			fmt.Fprintln(stderr, "usage: goforge dev [--port <n>]")
+			return 0, false
+		}
+	}
+	if raw == "" {
+		return 0, true
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil {
+		fmt.Fprintf(stderr, "goforge dev: --port %q is not a number\n", raw)
+		return 0, false
+	}
+	return n, true
 }

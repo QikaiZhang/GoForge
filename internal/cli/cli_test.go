@@ -2,10 +2,14 @@ package cli
 
 import (
 	"bytes"
+	"context"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 )
 
 // runCLI is a helper that runs one invocation and captures both streams.
@@ -228,4 +232,131 @@ func TestGenerateOutsideProject(t *testing.T) {
 	if !strings.Contains(errOut, "go.mod") {
 		t.Errorf("stderr = %q, want it to name the missing go.mod", errOut)
 	}
+}
+
+func TestDevFlagAndProjectChecks(t *testing.T) {
+	if code, _, _ := runCLI("dev", "--port"); code != ExitUsage {
+		t.Errorf("--port without value: exit = %d, want %d", code, ExitUsage)
+	}
+	if code, _, _ := runCLI("dev", "--port=abc"); code != ExitUsage {
+		t.Errorf("--port=abc: exit = %d, want %d", code, ExitUsage)
+	}
+	if code, _, _ := runCLI("dev", "--wat"); code != ExitUsage {
+		t.Errorf("unknown flag: exit = %d, want %d", code, ExitUsage)
+	}
+
+	// Outside a project: the go.mod check fires before anything else.
+	t.Chdir(t.TempDir())
+	code, _, errOut := runCLI("dev")
+	if code != ExitError {
+		t.Errorf("dev outside project: exit = %d, want %d", code, ExitError)
+	}
+	if !strings.Contains(errOut, "go.mod") {
+		t.Errorf("stderr = %q, want it to name the missing go.mod", errOut)
+	}
+}
+
+func TestDevBrokenConfigIsFatal(t *testing.T) {
+	// The counterpart of generate's warning: dev's whole behavior is
+	// configured, so a broken goforge.yaml must stop it.
+	scaffoldHere(t)
+	if err := os.WriteFile("goforge.yaml", []byte("server:\n  port: bogus\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, _, errOut := runCLI("dev")
+	if code != ExitError {
+		t.Errorf("exit = %d, want %d", code, ExitError)
+	}
+	if !strings.Contains(errOut, "goforge.yaml") {
+		t.Errorf("stderr = %q, want it to name the config file", errOut)
+	}
+}
+
+// TestDevRunsServerGracefully is the crown integration test: dev must
+// boot the generated server, the server must answer /healthz, and
+// cancelling the context must shut everything down with exit code 0
+// (the generated server handles SIGINT with a graceful shutdown).
+func TestDevRunsServerGracefully(t *testing.T) {
+	if testing.Short() {
+		t.Skip("integration test: compiles and runs the generated server")
+	}
+	scaffoldHere(t)
+	if code, _, errOut := runCLI("generate", "handler", "user"); code != ExitOK {
+		t.Fatalf("generate handler failed: %s", errOut)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	type devResult struct {
+		code int
+	}
+	done := make(chan devResult, 1)
+	out := &syncWriter{buf: new(bytes.Buffer)}
+	go func() {
+		// runDevContext instead of runDev: the test supplies the
+		// context instead of installing real signal handlers.
+		code := runDevContext(ctx, []string{"--port", "18123"}, out, out)
+		done <- devResult{code: code}
+	}()
+
+	// Wait for the server to come up (go run compiles first).
+	healthy := false
+	deadline := time.Now().Add(60 * time.Second)
+	for time.Now().Before(deadline) {
+		resp, err := http.Get("http://127.0.0.1:18123/healthz")
+		if err == nil {
+			resp.Body.Close()
+			if resp.StatusCode == http.StatusOK {
+				healthy = true
+				break
+			}
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	if !healthy {
+		cancel()
+		t.Fatalf("server never became healthy; dev output:\n%s", out.String())
+	}
+
+	// Simulate Ctrl+C.
+	cancel()
+
+	select {
+	case r := <-done:
+		if r.code != ExitOK {
+			t.Errorf("dev exit code after Ctrl+C = %d, want 0\ndev output:\n%s", r.code, out.String())
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatalf("dev did not exit after cancel; output:\n%s", out.String())
+	}
+	// The generated server logs this line from its SIGINT handler, so
+	// its presence proves the shutdown was graceful, not a SIGKILL.
+	// The log races with go run's exit, so poll briefly.
+	deadline = time.Now().Add(10 * time.Second)
+	for !strings.Contains(out.String(), "shutting down") {
+		if time.Now().After(deadline) {
+			t.Fatalf("output does not show a graceful shutdown:\n%s", out.String())
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+// syncWriter is safe for the two output streams a child writes through
+// (plain bytes.Buffer is not).
+type syncWriter struct {
+	mu  sync.Mutex
+	buf *bytes.Buffer
+}
+
+func (w *syncWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.buf.Write(p)
+}
+
+func (w *syncWriter) String() string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.buf.String()
 }
