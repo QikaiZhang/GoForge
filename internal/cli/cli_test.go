@@ -360,3 +360,84 @@ func (w *syncWriter) String() string {
 	defer w.mu.Unlock()
 	return w.buf.String()
 }
+
+// writeProjectTestFile adds a real test to the scaffolded project so
+// `goforge test` has something to run.
+func writeProjectTestFile(t *testing.T, body string) {
+	t.Helper()
+	if err := os.WriteFile("main_test.go", []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestTestArgParsing(t *testing.T) {
+	if code, _, _ := runCLI("test", "-v"); code != ExitUsage {
+		t.Errorf("go test flag before --: exit = %d, want %d", code, ExitUsage)
+	}
+}
+
+func TestTestOutsideProject(t *testing.T) {
+	t.Chdir(t.TempDir())
+	code, _, errOut := runCLI("test")
+	if code != ExitError {
+		t.Errorf("exit = %d, want %d", code, ExitError)
+	}
+	if !strings.Contains(errOut, "go.mod") {
+		t.Errorf("stderr = %q, want it to name the missing go.mod", errOut)
+	}
+}
+
+// TestTestExitCodePassthrough is the stage's core contract: a failing
+// test suite surfaces as exit code 1 with go's own output intact —
+// goforge must not dress the child's failure up as its own error.
+func TestTestExitCodePassthrough(t *testing.T) {
+	if testing.Short() {
+		t.Skip("integration test: runs the real go test")
+	}
+	scaffoldHere(t)
+	writeProjectTestFile(t, "package main\n\nimport \"testing\"\n\nfunc TestAlwaysFails(t *testing.T) {\n\tt.Fatal(\"boom\")\n}\n")
+
+	code, out, errOut := runCLI("test")
+	if code != 1 {
+		t.Errorf("failing suite: exit = %d, want 1 (passthrough)", code)
+	}
+	combined := out + errOut
+	if !strings.Contains(combined, "FAIL") || !strings.Contains(combined, "boom") {
+		t.Errorf("go test output not passed through:\n%s%s", out, errOut)
+	}
+
+	// A passing suite is exit 0.
+	writeProjectTestFile(t, "package main\n\nimport \"testing\"\n\nfunc TestAlwaysPasses(t *testing.T) {}\n")
+	code, _, _ = runCLI("test")
+	if code != 0 {
+		t.Errorf("passing suite: exit = %d, want 0", code)
+	}
+}
+
+func TestTestPassthroughAfterDashDash(t *testing.T) {
+	if testing.Short() {
+		t.Skip("integration test: runs the real go test")
+	}
+	scaffoldHere(t)
+	writeProjectTestFile(t, `package main
+
+import "testing"
+
+func TestOne(t *testing.T) {}
+func TestTwo(t *testing.T) {}
+`)
+
+	// `-- -run TestOne -v` must reach go test: only TestOne runs, so
+	// -v shows its name and TestTwo must stay absent.
+	code, out, errOut := runCLI("test", "--", "-run", "TestOne", "-v")
+	if code != 0 {
+		t.Errorf("exit = %d\n%s%s", code, out, errOut)
+	}
+	combined := out + errOut
+	if !strings.Contains(combined, "TestOne") {
+		t.Errorf("-run filter did not reach go test:\n%s", combined)
+	}
+	if strings.Contains(combined, "TestTwo") {
+		t.Errorf("-run filter was ignored, TestTwo ran:\n%s", combined)
+	}
+}

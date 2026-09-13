@@ -37,7 +37,7 @@ const (
 // version is overridden at build time with:
 //
 //	go build -ldflags "-X goforge/internal/cli.version=v1.2.3"
-var version = "0.7.0"
+var version = "0.8.0"
 
 const usage = `goforge is a scaffold for Go backend services.
 
@@ -48,6 +48,7 @@ Commands:
   new        create a new project skeleton
   generate   generate handler/service/repository code into the current project
   dev        run the current project's server (go run ./cmd/server)
+  test       run the current project's tests (go test ./...)
   version    print the goforge version
   help       show this help
 
@@ -88,6 +89,8 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return runGenerate(args[1:], stdout, stderr)
 	case args[0] == "dev":
 		return runDev(args[1:], stdout, stderr)
+	case args[0] == "test":
+		return runTest(args[1:], stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "goforge: unknown command %q\n\n", args[0])
 		fmt.Fprint(stderr, usage)
@@ -291,4 +294,56 @@ func parseDevPort(args []string, stderr io.Writer) (int, bool) {
 		return 0, false
 	}
 	return n, true
+}
+
+// runTest handles "goforge test [-- extra args]": run the current
+// project's tests via `go test ./...`.
+//
+// This command is the smallest consumer of the process package, and
+// exists mainly to make the exit-code contract visible: failing tests
+// exit 1 and goforge reports exactly that — not an error, not a
+// message about goforge itself.
+func runTest(args []string, stdout, stderr io.Writer) int {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	return runTestContext(ctx, args, stdout, stderr)
+}
+
+// runTestContext is the testable core of test.
+func runTestContext(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	// Everything before "--" belongs to goforge (and goforge accepts
+	// nothing here); everything after "--" goes to `go test` verbatim.
+	// This is the standard argv convention for nested CLIs.
+	passthrough := []string{}
+	rest := args
+	for i, a := range rest {
+		if a == "--" {
+			passthrough = args[i+1:]
+			args = args[:i]
+			break
+		}
+	}
+	if len(args) > 0 {
+		fmt.Fprintf(stderr, "goforge test: unknown argument %q\\n", args[0])
+		fmt.Fprintln(stderr)
+		fmt.Fprintln(stderr, "usage: goforge test [-- <go test flags>]")
+		return ExitUsage
+	}
+
+	if _, err := os.Stat("go.mod"); err != nil {
+		fmt.Fprintln(stderr, "goforge test: not inside a goforge project (go.mod not found)")
+		return ExitError
+	}
+
+	goArgs := append([]string{"test", "./..."}, passthrough...)
+	code, err := process.Run(ctx, "go", goArgs, process.Options{
+		Stdin:  os.Stdin,
+		Stdout: stdout,
+		Stderr: stderr,
+	})
+	if err != nil {
+		fmt.Fprintf(stderr, "goforge test: %v\\n", err)
+		return ExitError
+	}
+	return code
 }
