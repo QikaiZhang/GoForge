@@ -483,3 +483,27 @@ func TestGitStatusInsideRepository(t *testing.T) {
 		t.Errorf("stdout = %q, want git status output", out)
 	}
 }
+
+func TestHelpListsEveryRegisteredCommand(t *testing.T) {
+	// The invariant the registry refactor bought: it is now impossible
+	// to register a command and forget to document it.
+	_, out, _ := runCLI("help")
+	for _, c := range commands {
+		if !strings.Contains(out, c.name) {
+			t.Errorf("help does not mention registered command %q", c.name)
+		}
+		if !strings.Contains(out, c.short) {
+			t.Errorf("help does not contain the description of %q", c.name)
+		}
+	}
+}
+
+func TestCommandNamesAreUnique(t *testing.T) {
+	seen := map[string]bool{}
+	for _, c := range commands {
+		if seen[c.name] {
+			t.Errorf("command %q registered twice", c.name)
+		}
+		seen[c.name] = true
+	}
+}

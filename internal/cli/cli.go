@@ -38,23 +38,7 @@ const (
 // version is overridden at build time with:
 //
 //	go build -ldflags "-X goforge/internal/cli.version=v1.2.3"
-var version = "0.9.0"
-
-const usage = `goforge is a scaffold for Go backend services.
-
-Usage:
-  goforge <command> [args]
-
-Commands:
-  new        create a new project skeleton
-  generate   generate handler/service/repository code into the current project
-  dev        run the current project's server (go run ./cmd/server)
-  test       run the current project's tests (go test ./...)
-  git        run git status in the current project
-  version    print the goforge version
-  help       show this help
-
-Use "goforge help" to see this text again.`
+var version = "1.0.0"
 
 // templatesFS is the embedded template tree rooted at templates/, so
 // template names stay layout-independent ("project/go.mod.tmpl").
@@ -71,35 +55,77 @@ var templatesFS = func() fs.FS {
 	return sub
 }()
 
+// command is one goforge subcommand: a name, a one-line help string,
+// and the function that implements it.
+//
+// The registry below replaced a dispatch switch plus a hand-written
+// usage string during the refactor stage. The help text is derived
+// from this table, so a newly registered command can no longer be
+// forgotten in the help output, and dispatch is one lookup instead of
+// a growing switch. A struct with a func field is deliberately chosen
+// over a Command interface: there is exactly one implementation kind,
+// so an interface would be ceremony, not abstraction.
+type command struct {
+	name  string
+	short string
+	run   func(args []string, stdout, stderr io.Writer) int
+}
+
+// commands is the full command registry, in help order.
+var commands = []command{
+	{name: "new", short: "create a new project skeleton", run: runNew},
+	{name: "generate", short: "generate handler/service/repository code into the current project", run: runGenerate},
+	{name: "dev", short: "run the current project's server (go run ./cmd/server)", run: runDev},
+	{name: "test", short: "run the current project's tests (go test ./...)", run: runTest},
+	{name: "git", short: "run git status in the current project", run: runGit},
+	{name: "version", short: "print the goforge version", run: runVersion},
+}
+
+// usageText renders the help from the command registry, so the list of
+// commands exists exactly once in this file.
+func usageText() string {
+	var b strings.Builder
+	b.WriteString("goforge is a scaffold for Go backend services.\n\n")
+	b.WriteString("Usage:\n  goforge <command> [args]\n\n")
+	b.WriteString("Commands:\n")
+	for _, c := range commands {
+		fmt.Fprintf(&b, "  %-10s %s\n", c.name, c.short)
+	}
+	return b.String()
+}
+
+func printUsage(w io.Writer) {
+	fmt.Fprint(w, usageText())
+}
+
+// runVersion handles "goforge version" and the "--version" flag.
+func runVersion(_ []string, stdout, _ io.Writer) int {
+	fmt.Fprintf(stdout, "goforge version %s\n", version)
+	return ExitOK
+}
+
 // Run executes one goforge invocation and returns the process exit code.
 // args is argv without the program name; stdout/stderr are injected so
 // tests can capture output without touching the real process streams.
 func Run(args []string, stdout, stderr io.Writer) int {
 	switch {
 	case len(args) == 0:
-		fmt.Fprint(stdout, usage)
+		printUsage(stdout)
 		return ExitOK
 	case args[0] == "-h" || args[0] == "--help" || args[0] == "help":
-		fmt.Fprint(stdout, usage)
+		printUsage(stdout)
 		return ExitOK
-	case args[0] == "--version" || args[0] == "version":
-		fmt.Fprintf(stdout, "goforge version %s\n", version)
-		return ExitOK
-	case args[0] == "new":
-		return runNew(args[1:], stdout, stderr)
-	case args[0] == "generate":
-		return runGenerate(args[1:], stdout, stderr)
-	case args[0] == "dev":
-		return runDev(args[1:], stdout, stderr)
-	case args[0] == "test":
-		return runTest(args[1:], stdout, stderr)
-	case args[0] == "git":
-		return runGit(args[1:], stdout, stderr)
-	default:
-		fmt.Fprintf(stderr, "goforge: unknown command %q\n\n", args[0])
-		fmt.Fprint(stderr, usage)
-		return ExitUsage
+	case args[0] == "--version":
+		return runVersion(nil, stdout, stderr)
 	}
+	for _, c := range commands {
+		if c.name == args[0] {
+			return c.run(args[1:], stdout, stderr)
+		}
+	}
+	fmt.Fprintf(stderr, "goforge: unknown command %q\n\n", args[0])
+	printUsage(stderr)
+	return ExitUsage
 }
 
 // runNew handles "goforge new <name>": validate the name, scaffold the
@@ -155,8 +181,7 @@ func runGenerate(args []string, stdout, stderr io.Writer) int {
 	}
 	if len(rest) != 2 {
 		fmt.Fprintln(stderr, "goforge generate: a kind and an entity name are required")
-		fmt.Fprintln(stderr)
-		fmt.Fprintln(stderr, "usage: goforge generate handler|service|repository <name> [--force]")
+		printGenerateUsage(stderr)
 		return ExitUsage
 	}
 
@@ -167,13 +192,11 @@ func runGenerate(args []string, stdout, stderr io.Writer) int {
 	switch {
 	case !req.Kind.Valid():
 		fmt.Fprintf(stderr, "goforge generate: unknown kind %q (want handler, service or repository)\n", req.Kind)
-		fmt.Fprintln(stderr)
-		fmt.Fprintln(stderr, "usage: goforge generate handler|service|repository <name> [--force]")
+		printGenerateUsage(stderr)
 		return ExitUsage
 	case generator.ValidateName(req.Name) != nil:
 		fmt.Fprintf(stderr, "goforge generate: %v\n", generator.ValidateName(req.Name))
-		fmt.Fprintln(stderr)
-		fmt.Fprintln(stderr, "usage: goforge generate handler|service|repository <name> [--force]")
+		printGenerateUsage(stderr)
 		return ExitUsage
 	}
 
@@ -386,4 +409,9 @@ func runGitContext(ctx context.Context, args []string, stdout, stderr io.Writer)
 		return ExitError
 	}
 	return code
+}
+
+func printGenerateUsage(stderr io.Writer) {
+	fmt.Fprintln(stderr)
+	fmt.Fprintln(stderr, "usage: goforge generate handler|service|repository <name> [--force]")
 }
