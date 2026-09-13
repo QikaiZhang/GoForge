@@ -56,6 +56,7 @@ var scaffoldFiles = []fileSpec{
 	{filepath.Join("internal", "model", "model.go"), "project/model.go.tmpl"},
 	{filepath.Join("internal", "handler", "respond.go"), "project/respond.go.tmpl"},
 	{filepath.Join("configs", "config.yaml"), "project/config.yaml.tmpl"},
+	{"goforge.yaml", "project/goforge.yaml.tmpl"},
 	{filepath.Join("api", ".gitkeep"), ""},
 	{filepath.Join("internal", "service", ".gitkeep"), ""},
 	{filepath.Join("internal", "repository", ".gitkeep"), ""},

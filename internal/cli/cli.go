@@ -13,6 +13,7 @@ import (
 	"io/fs"
 
 	"goforge"
+	"goforge/internal/config"
 	"goforge/internal/generator"
 	"goforge/internal/project"
 )
@@ -28,7 +29,7 @@ const (
 // version is overridden at build time with:
 //
 //	go build -ldflags "-X goforge/internal/cli.version=v1.2.3"
-var version = "0.5.0"
+var version = "0.6.0"
 
 const usage = `goforge is a scaffold for Go backend services.
 
@@ -167,6 +168,12 @@ func runGenerate(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintln(stderr, "keep the existing file, or re-run with --force to overwrite it")
 		}
 		return ExitError
+	}
+	// A broken goforge.yaml does not block generation (this command can
+	// run without it), but it must not pass silently — the same broken
+	// file aborts `goforge dev`.
+	if _, err := config.Load("."); err != nil {
+		fmt.Fprintf(stderr, "goforge generate: warning: %v\n", err)
 	}
 	fmt.Fprintf(stdout, "created %s\n", path)
 	return ExitOK
