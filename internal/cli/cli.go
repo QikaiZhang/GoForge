@@ -22,6 +22,7 @@ import (
 	"goforge"
 	"goforge/internal/config"
 	"goforge/internal/generator"
+	"goforge/internal/git"
 	"goforge/internal/process"
 	"goforge/internal/project"
 )
@@ -37,7 +38,7 @@ const (
 // version is overridden at build time with:
 //
 //	go build -ldflags "-X goforge/internal/cli.version=v1.2.3"
-var version = "0.8.0"
+var version = "0.9.0"
 
 const usage = `goforge is a scaffold for Go backend services.
 
@@ -49,6 +50,7 @@ Commands:
   generate   generate handler/service/repository code into the current project
   dev        run the current project's server (go run ./cmd/server)
   test       run the current project's tests (go test ./...)
+  git        run git status in the current project
   version    print the goforge version
   help       show this help
 
@@ -91,6 +93,8 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return runDev(args[1:], stdout, stderr)
 	case args[0] == "test":
 		return runTest(args[1:], stdout, stderr)
+	case args[0] == "git":
+		return runGit(args[1:], stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "goforge: unknown command %q\n\n", args[0])
 		fmt.Fprint(stderr, usage)
@@ -343,6 +347,42 @@ func runTestContext(ctx context.Context, args []string, stdout, stderr io.Writer
 	})
 	if err != nil {
 		fmt.Fprintf(stderr, "goforge test: %v\\n", err)
+		return ExitError
+	}
+	return code
+}
+
+// runGit handles "goforge git status". The git subcommand is the
+// project's demonstration of CLI composition: goforge gains a
+// capability by invoking another CLI, not by linking a library.
+func runGit(args []string, stdout, stderr io.Writer) int {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	return runGitContext(ctx, args, stdout, stderr)
+}
+
+// runGitContext is the testable core of git.
+func runGitContext(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	if len(args) != 1 || args[0] != "status" {
+		if len(args) > 0 {
+			fmt.Fprintf(stderr, "goforge git: only 'status' is supported; use the git binary directly for %q\n", args[0])
+		} else {
+			fmt.Fprintln(stderr, "goforge git: a subcommand is required")
+		}
+		fmt.Fprintln(stderr)
+		fmt.Fprintln(stderr, "usage: goforge git status")
+		return ExitUsage
+	}
+
+	code, err := git.Status(ctx, ".", stdout, stderr)
+	if err != nil {
+		fmt.Fprintf(stderr, "goforge git: %v\n", err)
+		return ExitError
+	}
+	if code == 128 {
+		// git already printed "fatal: not a git repository..."; add
+		// the actionable hint goforge knows and git doesn't.
+		fmt.Fprintln(stderr, "this directory is not versioned; run 'git init' first")
 		return ExitError
 	}
 	return code

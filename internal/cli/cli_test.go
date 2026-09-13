@@ -5,6 +5,7 @@ import (
 	"context"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -439,5 +440,46 @@ func TestTwo(t *testing.T) {}
 	}
 	if strings.Contains(combined, "TestTwo") {
 		t.Errorf("-run filter was ignored, TestTwo ran:\n%s", combined)
+	}
+}
+
+func TestGitArgChecking(t *testing.T) {
+	if code, _, _ := runCLI("git"); code != ExitUsage {
+		t.Errorf("bare git: exit = %d, want %d", code, ExitUsage)
+	}
+	if code, _, errOut := runCLI("git", "log"); code != ExitUsage {
+		t.Errorf("git log: exit = %d, want %d", code, ExitUsage)
+	} else if !strings.Contains(errOut, "only 'status'") {
+		t.Errorf("stderr = %q, want an only-status hint", errOut)
+	}
+}
+
+func TestGitStatusOutsideRepository(t *testing.T) {
+	t.Chdir(t.TempDir()) // exists but not a git repo
+
+	code, _, errOut := runCLI("git", "status")
+	if code != ExitError {
+		t.Errorf("exit = %d, want %d", code, ExitError)
+	}
+	if !strings.Contains(errOut, "git init") {
+		t.Errorf("stderr = %q, want an init hint", errOut)
+	}
+}
+
+func TestGitStatusInsideRepository(t *testing.T) {
+	if testing.Short() {
+		t.Skip("integration test: shells out to git")
+	}
+	t.Chdir(t.TempDir())
+	if out, err := exec.Command("git", "init", "-q").CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v\n%s", err, out)
+	}
+
+	code, out, _ := runCLI("git", "status")
+	if code != ExitOK {
+		t.Errorf("exit = %d, want 0", code)
+	}
+	if !strings.Contains(out, "On branch") {
+		t.Errorf("stdout = %q, want git status output", out)
 	}
 }
