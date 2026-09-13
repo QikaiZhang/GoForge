@@ -13,6 +13,7 @@ import (
 	"io/fs"
 
 	"goforge"
+	"goforge/internal/generator"
 	"goforge/internal/project"
 )
 
@@ -27,7 +28,7 @@ const (
 // version is overridden at build time with:
 //
 //	go build -ldflags "-X goforge/internal/cli.version=v1.2.3"
-var version = "0.3.0"
+var version = "0.4.0"
 
 const usage = `goforge is a scaffold for Go backend services.
 
@@ -36,6 +37,7 @@ Usage:
 
 Commands:
   new        create a new project skeleton
+  generate   generate handler/service/repository code into the current project
   version    print the goforge version
   help       show this help
 
@@ -72,6 +74,8 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return ExitOK
 	case args[0] == "new":
 		return runNew(args[1:], stdout, stderr)
+	case args[0] == "generate":
+		return runGenerate(args[1:], stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "goforge: unknown command %q\n\n", args[0])
 		fmt.Fprint(stderr, usage)
@@ -114,5 +118,56 @@ func runNew(args []string, stdout, stderr io.Writer) int {
 	fmt.Fprintln(stdout, "next steps:")
 	fmt.Fprintf(stdout, "  cd %s\n", name)
 	fmt.Fprintln(stdout, "  go run ./cmd/server")
+	return ExitOK
+}
+
+// runGenerate handles "goforge generate <kind> <name> [--force]".
+// The command must be run inside a goforge project; generator.Generate
+// verifies that and returns a descriptive error when not.
+func runGenerate(args []string, stdout, stderr io.Writer) int {
+	var force bool
+	var rest []string
+	for _, a := range args {
+		if a == "--force" {
+			force = true
+			continue
+		}
+		rest = append(rest, a)
+	}
+	if len(rest) != 2 {
+		fmt.Fprintln(stderr, "goforge generate: a kind and an entity name are required")
+		fmt.Fprintln(stderr)
+		fmt.Fprintln(stderr, "usage: goforge generate handler|service|repository <name> [--force]")
+		return ExitUsage
+	}
+
+	req := generator.Request{Kind: generator.Kind(rest[0]), Name: rest[1], Force: force}
+
+	// Input problems are usage errors; the generator re-validates them
+	// (it is a library function and cannot assume the CLI checked).
+	switch {
+	case !req.Kind.Valid():
+		fmt.Fprintf(stderr, "goforge generate: unknown kind %q (want handler, service or repository)\n", req.Kind)
+		fmt.Fprintln(stderr)
+		fmt.Fprintln(stderr, "usage: goforge generate handler|service|repository <name> [--force]")
+		return ExitUsage
+	case generator.ValidateName(req.Name) != nil:
+		fmt.Fprintf(stderr, "goforge generate: %v\n", generator.ValidateName(req.Name))
+		fmt.Fprintln(stderr)
+		fmt.Fprintln(stderr, "usage: goforge generate handler|service|repository <name> [--force]")
+		return ExitUsage
+	}
+
+	// Everything Generate reports from here on is a runtime failure:
+	// not inside a project, file exists without --force, disk errors.
+	path, err := generator.Generate(".", req, templatesFS)
+	if err != nil {
+		fmt.Fprintf(stderr, "goforge generate: %v\n", err)
+		if errors.Is(err, generator.ErrFileExists) {
+			fmt.Fprintln(stderr, "keep the existing file, or re-run with --force to overwrite it")
+		}
+		return ExitError
+	}
+	fmt.Fprintf(stdout, "created %s\n", path)
 	return ExitOK
 }

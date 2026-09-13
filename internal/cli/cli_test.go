@@ -159,3 +159,73 @@ func TestNewRefusesExistingProject(t *testing.T) {
 		t.Errorf("stderr = %q, want an exists message", errOut)
 	}
 }
+
+// scaffoldHere scaffolds a project into a temp cwd and cds into it —
+// the environment "goforge generate" expects.
+func scaffoldHere(t *testing.T) {
+	t.Helper()
+	t.Chdir(t.TempDir())
+	if code, _, errOut := runCLI("new", "user-service"); code != ExitOK {
+		t.Fatalf("goforge new failed: %s", errOut)
+	}
+	if err := os.Chdir("user-service"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestGenerateCreatesLayerFile(t *testing.T) {
+	scaffoldHere(t)
+
+	code, out, errOut := runCLI("generate", "service", "user")
+	if code != ExitOK {
+		t.Fatalf("exit code = %d, stderr = %q", code, errOut)
+	}
+	if !strings.Contains(out, filepath.Join("internal", "service", "user.go")) {
+		t.Errorf("stdout = %q, want it to name the created file", out)
+	}
+	content, err := os.ReadFile(filepath.Join("internal", "service", "user.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(content), "type UserService struct") {
+		t.Errorf("generated service does not contain the service type:\n%s", content)
+	}
+}
+
+func TestGenerateErrorsAndForce(t *testing.T) {
+	scaffoldHere(t)
+
+	if code, _, _ := runCLI("generate", "controller", "user"); code != ExitUsage {
+		t.Errorf("unknown kind: exit = %d, want %d", code, ExitUsage)
+	}
+	if code, _, _ := runCLI("generate", "handler"); code != ExitUsage {
+		t.Errorf("missing name: exit = %d, want %d", code, ExitUsage)
+	}
+	if code, _, _ := runCLI("generate", "handler", "user-profile"); code != ExitUsage {
+		t.Errorf("invalid name: exit = %d, want %d", code, ExitUsage)
+	}
+
+	if code, _, _ := runCLI("generate", "handler", "user"); code != ExitOK {
+		t.Fatalf("first generate failed")
+	}
+	code, _, errOut := runCLI("generate", "handler", "user")
+	if code != ExitError || !strings.Contains(errOut, "--force") {
+		t.Errorf("duplicate generate: exit = %d, stderr = %q, want exit %d and a --force hint",
+			code, errOut, ExitError)
+	}
+	if code, _, _ := runCLI("generate", "handler", "user", "--force"); code != ExitOK {
+		t.Errorf("generate --force: exit != 0")
+	}
+}
+
+func TestGenerateOutsideProject(t *testing.T) {
+	t.Chdir(t.TempDir()) // no go.mod here
+
+	code, _, errOut := runCLI("generate", "handler", "user")
+	if code != ExitError {
+		t.Errorf("exit = %d, want %d", code, ExitError)
+	}
+	if !strings.Contains(errOut, "go.mod") {
+		t.Errorf("stderr = %q, want it to name the missing go.mod", errOut)
+	}
+}
