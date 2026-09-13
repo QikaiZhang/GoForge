@@ -120,37 +120,13 @@ func TestStreamsAreSeparated(t *testing.T) {
 	}
 }
 
-// writeTemplatesFixture creates a minimal templates/ tree in dir. At
-// this stage goforge reads templates relative to its working
-// directory, so the on-disk CLI tests must provide one.
-func writeTemplatesFixture(t *testing.T, dir string) {
-	t.Helper()
-	files := map[string]string{
-		"templates/project/go.mod.tmpl":      "module {{.Name}}",
-		"templates/project/main.go.tmpl":     "package main // {{.Name}}",
-		"templates/project/model.go.tmpl":    "package model",
-		"templates/project/config.yaml.tmpl": "server: {}",
-		"templates/project/gitignore.tmpl":   "bin/",
-		"templates/project/README.md.tmpl":   "# {{.Name}}",
-	}
-	for name, content := range files {
-		path := filepath.Join(dir, filepath.FromSlash(name))
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-}
+// The tests below exercise "goforge new" against the real embedded
+// templates. They run inside a temp working directory (t.Chdir
+// restores the original directory automatically) because new writes
+// relative to the cwd.
 
 func TestNewCreatesProjectOnDisk(t *testing.T) {
-	// goforge new writes into the working directory, so run it inside a
-	// temp dir instead of the package directory. t.Chdir restores the
-	// original directory automatically (Go 1.24+).
-	tmp := t.TempDir()
-	writeTemplatesFixture(t, tmp)
-	t.Chdir(tmp)
+	t.Chdir(t.TempDir())
 
 	code, out, errOut := runCLI("new", "user-service")
 	if code != ExitOK {
@@ -170,9 +146,7 @@ func TestNewCreatesProjectOnDisk(t *testing.T) {
 }
 
 func TestNewRefusesExistingProject(t *testing.T) {
-	tmp := t.TempDir()
-	writeTemplatesFixture(t, tmp)
-	t.Chdir(tmp)
+	t.Chdir(t.TempDir())
 	if code, _, _ := runCLI("new", "user-service"); code != ExitOK {
 		t.Fatalf("first goforge new failed")
 	}

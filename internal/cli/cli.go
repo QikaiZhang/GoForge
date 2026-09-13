@@ -10,9 +10,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
-	"path/filepath"
+	"io/fs"
 
+	"goforge"
 	"goforge/internal/project"
 )
 
@@ -40,6 +40,21 @@ Commands:
   help       show this help
 
 Use "goforge help" to see this text again.`
+
+// templatesFS is the embedded template tree rooted at templates/, so
+// template names stay layout-independent ("project/go.mod.tmpl").
+//
+// embed.FS keeps the root directory name in every path
+// ("templates/project/go.mod.tmpl"); fs.Sub strips it. The //go:embed
+// directive guarantees the directory exists, so the error here can
+// only be a programming mistake — hence the panic.
+var templatesFS = func() fs.FS {
+	sub, err := fs.Sub(goforge.Templates, "templates")
+	if err != nil {
+		panic(fmt.Sprintf("embedded templates missing: %v", err))
+	}
+	return sub
+}()
 
 // Run executes one goforge invocation and returns the process exit code.
 // args is argv without the program name; stdout/stderr are injected so
@@ -83,11 +98,9 @@ func runNew(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "goforge new: %v\n", err)
 		return ExitUsage
 	}
-	// V1: templates are read from ./templates relative to the working
-	// directory. This couples the binary to the source checkout — the
-	// embedding commit in this stage fixes it.
-	templates := os.DirFS(filepath.Join(".", "templates"))
-	if err := project.Create(name, name, templates); err != nil {
+	// Templates are embedded in the binary, so goforge works from any
+	// directory without a source checkout next to it.
+	if err := project.Create(name, name, templatesFS); err != nil {
 		if errors.Is(err, project.ErrDirExists) {
 			fmt.Fprintf(stderr, "goforge new: %v\n", err)
 			fmt.Fprintln(stderr, "pick another name or remove the existing directory")
