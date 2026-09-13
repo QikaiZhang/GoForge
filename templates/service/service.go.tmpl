@@ -7,21 +7,23 @@ import (
 	"{{.Module}}/internal/model"
 )
 
-// Repository is the storage contract that {{.Pascal}}Service depends
-// on. Declaring it here (consumer side) means the service never imports
-// the repository package and can be unit-tested with a fake.
-type Repository interface {
+// {{.Pascal}}Repository is the storage contract that
+// {{.Pascal}}Service depends on. Declaring it here (consumer side)
+// means the service never imports the repository package and can be
+// unit-tested with a fake. The name carries the entity prefix because
+// several entities may live in this package side by side.
+type {{.Pascal}}Repository interface {
 	Save(ctx context.Context, m model.{{.Pascal}}) error
 	Get(ctx context.Context, id string) (*model.{{.Pascal}}, error)
 }
 
 // {{.Pascal}}Service contains the business rules for {{.Name}} records.
 type {{.Pascal}}Service struct {
-	repo Repository
+	repo {{.Pascal}}Repository
 }
 
-// New{{.Pascal}}Service wires the service to a Repository implementation.
-func New{{.Pascal}}Service(r Repository) *{{.Pascal}}Service {
+// New{{.Pascal}}Service wires the service to a {{.Pascal}}Repository implementation.
+func New{{.Pascal}}Service(r {{.Pascal}}Repository) *{{.Pascal}}Service {
 	return &{{.Pascal}}Service{repo: r}
 }
 

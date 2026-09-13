@@ -28,7 +28,7 @@ const (
 // version is overridden at build time with:
 //
 //	go build -ldflags "-X goforge/internal/cli.version=v1.2.3"
-var version = "0.4.0"
+var version = "0.5.0"
 
 const usage = `goforge is a scaffold for Go backend services.
 

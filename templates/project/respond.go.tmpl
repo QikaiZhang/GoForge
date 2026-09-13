@@ -1,0 +1,15 @@
+package handler
+
+import (
+	"encoding/json"
+	"net/http"
+)
+
+// writeJSON marshals v and writes it with the given status code.
+// It ships with the scaffold so that every generated handler shares
+// one implementation instead of declaring its own.
+func writeJSON(w http.ResponseWriter, status int, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(v)
+}

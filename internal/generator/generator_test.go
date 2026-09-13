@@ -102,7 +102,7 @@ func TestGenerateHandler(t *testing.T) {
 
 func TestGenerateAllKinds(t *testing.T) {
 	dir := scaffoldProject(t)
-	for _, kind := range []Kind{KindHandler, KindService, KindRepository} {
+	for _, kind := range []Kind{KindService, KindRepository, KindHandler} {
 		if _, err := Generate(dir, Request{Kind: kind, Name: "user"}, realTemplates()); err != nil {
 			t.Errorf("Generate %s: %v", kind, err)
 		}
@@ -115,6 +115,77 @@ func TestGenerateAllKinds(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(dir, p)); err != nil {
 			t.Errorf("%s missing: %v", p, err)
 		}
+	}
+}
+
+func TestGenerateHandlerWiresFeature(t *testing.T) {
+	dir := scaffoldProject(t)
+
+	if _, err := Generate(dir, Request{Kind: KindHandler, Name: "user"}, realTemplates()); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+
+	// Handler generation ensures the sibling layers exist...
+	for _, p := range []string{
+		filepath.Join("internal", "service", "user.go"),
+		filepath.Join("internal", "repository", "user.go"),
+	} {
+		if _, err := os.Stat(filepath.Join(dir, p)); err != nil {
+			t.Errorf("%s missing after handler generation: %v", p, err)
+		}
+	}
+
+	// ...and wires the feature into main.go: imports + registerRoutes body.
+	mainGo, err := os.ReadFile(filepath.Join(dir, "cmd", "server", "main.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		`"user-service/internal/handler"`,
+		`"user-service/internal/repository"`,
+		`"user-service/internal/service"`,
+		"userRepo := repository.NewUserRepository()",
+		"userSvc := service.NewUserService(userRepo)",
+		"userHandler := handler.NewUserHandler(userSvc)",
+		"userHandler.Register(mux)",
+	} {
+		if !strings.Contains(string(mainGo), want) {
+			t.Errorf("main.go does not contain %q:\n%s", want, mainGo)
+		}
+	}
+
+	// Re-generating with --force must not duplicate the wiring.
+	if _, err := Generate(dir, Request{Kind: KindHandler, Name: "user", Force: true}, realTemplates()); err != nil {
+		t.Fatalf("regenerate: %v", err)
+	}
+	mainGo2, err := os.ReadFile(filepath.Join(dir, "cmd", "server", "main.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Count(string(mainGo2), "NewUserHandler("); got != 1 {
+		t.Errorf("wiring appears %d times after regeneration, want 1:\n%s", got, mainGo2)
+	}
+}
+
+func TestGenerateServiceDoesNotWire(t *testing.T) {
+	dir := scaffoldProject(t)
+	if _, err := Generate(dir, Request{Kind: KindService, Name: "user"}, realTemplates()); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	mainGo, err := os.ReadFile(filepath.Join(dir, "cmd", "server", "main.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(mainGo), "UserService") {
+		t.Errorf("service generation must not touch main.go:\n%s", mainGo)
+	}
+	// It still ensures the model type the generated code references.
+	modelGo, err := os.ReadFile(filepath.Join(dir, "internal", "model", "model.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(modelGo), "type User struct") {
+		t.Errorf("model type missing:\n%s", modelGo)
 	}
 }
 
@@ -169,10 +240,9 @@ func TestModulePathParsing(t *testing.T) {
 }
 
 // TestGeneratedProjectCompiles is the end-to-end guarantee: scaffolding
-// plus all three layers of the sample entity must produce a project
-// that still builds. (Other entity names do not compile at this stage
-// — the generated code references model types that only exist for the
-// scaffold sample. The AST stage fixes that properly.)
+// plus generated features must produce a project that still builds.
+// Both the scaffold sample entity (user) and a brand-new entity (order,
+// whose model type must be injected by wiring) are exercised.
 func TestGeneratedProjectCompiles(t *testing.T) {
 	if testing.Short() {
 		t.Skip("integration test: builds the generated project")
@@ -182,15 +252,26 @@ func TestGeneratedProjectCompiles(t *testing.T) {
 	}
 
 	dir := scaffoldProject(t)
-	for _, kind := range []Kind{KindHandler, KindService, KindRepository} {
-		if _, err := Generate(dir, Request{Kind: kind, Name: "user"}, realTemplates()); err != nil {
-			t.Fatalf("Generate %s: %v", kind, err)
+	for _, name := range []string{"user", "order"} {
+		if _, err := Generate(dir, Request{Kind: KindHandler, Name: name}, realTemplates()); err != nil {
+			t.Fatalf("Generate handler %s: %v", name, err)
 		}
 	}
 
-	cmd := exec.Command("go", "build", "./...")
-	cmd.Dir = dir
-	if out, err := cmd.CombinedOutput(); err != nil {
+	build := exec.Command("go", "build", "./...")
+	build.Dir = dir
+	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("generated project does not build: %v\n%s", err, out)
+	}
+
+	// The wired routes must actually be registered in main.go.
+	mainGo, err := os.ReadFile(filepath.Join(dir, "cmd", "server", "main.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"userHandler.Register(mux)", "orderHandler.Register(mux)"} {
+		if !strings.Contains(string(mainGo), want) {
+			t.Errorf("main.go does not contain %q:\n%s", want, mainGo)
+		}
 	}
 }

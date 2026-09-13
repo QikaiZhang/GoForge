@@ -3,8 +3,8 @@
 //
 // Generate decides WHAT gets written and WHERE; template rendering
 // stays in the template package. The generator owns naming, target
-// paths, the overwrite policy, and the "is this actually a goforge
-// project" check.
+// paths, the overwrite policy, the "is this actually a goforge
+// project" check, and wiring the new code into the app.
 package generator
 
 import (
@@ -61,6 +61,12 @@ type Data struct {
 
 // Generate renders the file for req into the project rooted at dir
 // (usually ".") and returns the path it created.
+//
+// A handler generation additionally wires the feature into the app
+// (see wiring.go): the model type is ensured and registerRoutes in
+// cmd/server/main.go starts serving the new routes. When only the
+// wiring fails, the returned path still names the created file and
+// the error explains what did not happen.
 func Generate(dir string, req Request, templates fs.FS) (string, error) {
 	if !req.Kind.Valid() {
 		return "", fmt.Errorf("unknown kind %q (want handler, service or repository)", req.Kind)
@@ -73,6 +79,20 @@ func Generate(dir string, req Request, templates fs.FS) (string, error) {
 		return "", err
 	}
 
+	data := Data{Name: req.Name, Pascal: Pascal(req.Name), Module: module}
+	path, err := renderLayer(dir, req, data, templates)
+	if err != nil {
+		return "", err
+	}
+	if err := wireFeature(dir, data, req.Kind, templates); err != nil {
+		return path, fmt.Errorf("%s created, but wiring failed: %w", path, err)
+	}
+	return path, nil
+}
+
+// renderLayer renders and writes the file for one kind, enforcing the
+// overwrite policy.
+func renderLayer(dir string, req Request, data Data, templates fs.FS) (string, error) {
 	spec := kindSpecs[req.Kind]
 	outDir := filepath.Join(dir, "internal", spec.dir)
 	outPath := filepath.Join(outDir, req.Name+".go")
@@ -83,7 +103,6 @@ func Generate(dir string, req Request, templates fs.FS) (string, error) {
 		return "", fmt.Errorf("stat %s: %w", outPath, err)
 	}
 
-	data := Data{Name: req.Name, Pascal: Pascal(req.Name), Module: module}
 	content, err := template.Render(templates, spec.tmpl, data)
 	if err != nil {
 		return "", err

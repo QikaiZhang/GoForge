@@ -8,8 +8,10 @@ import (
 	"{{.Module}}/internal/model"
 )
 
-// ErrNotFound is returned when a {{.Name}} does not exist.
-var ErrNotFound = errors.New("{{.Name}} not found")
+// Err{{.Pascal}}NotFound is returned when a {{.Name}} does not exist.
+// The name carries the entity prefix because several entities may
+// live in this package side by side.
+var Err{{.Pascal}}NotFound = errors.New("{{.Name}} not found")
 
 // {{.Pascal}}Repository is an in-memory data store for {{.Name}}
 // records. Swap it for a database-backed implementation behind the
@@ -38,7 +40,7 @@ func (r *{{.Pascal}}Repository) Get(_ context.Context, id string) (*model.{{.Pas
 	defer r.mu.RUnlock()
 	m, ok := r.items[id]
 	if !ok {
-		return nil, ErrNotFound
+		return nil, Err{{.Pascal}}NotFound
 	}
 	return &m, nil
 }
