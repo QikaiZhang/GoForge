@@ -7,8 +7,11 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"io"
+
+	"goforge/internal/project"
 )
 
 // Exit codes goforge terminates with. Keeping them named in one place
@@ -22,7 +25,7 @@ const (
 // version is overridden at build time with:
 //
 //	go build -ldflags "-X goforge/internal/cli.version=v1.2.3"
-var version = "0.1.0"
+var version = "0.2.0"
 
 const usage = `goforge is a scaffold for Go backend services.
 
@@ -30,7 +33,7 @@ Usage:
   goforge <command> [args]
 
 Commands:
-  new        create a new project skeleton (not implemented yet)
+  new        create a new project skeleton
   version    print the goforge version
   help       show this help
 
@@ -59,9 +62,12 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	}
 }
 
-// runNew handles "goforge new <name>". At this stage it only validates
-// its arguments and prints what it would do; real scaffolding arrives
-// in the project-init stage.
+// runNew handles "goforge new <name>": validate the name, scaffold the
+// project into ./<name>, and print next steps.
+//
+// Exit code policy: a bad name is a usage error (the user typed
+// something invalid), a filesystem failure is a runtime error (the
+// command was fine, the world wasn't).
 func runNew(args []string, stdout, stderr io.Writer) int {
 	if len(args) != 1 {
 		fmt.Fprintln(stderr, "goforge new: exactly one project name is required")
@@ -70,6 +76,24 @@ func runNew(args []string, stdout, stderr io.Writer) int {
 		return ExitUsage
 	}
 	name := args[0]
-	fmt.Fprintf(stdout, "would scaffold project %q (scaffolding not implemented yet)\n", name)
+
+	if err := project.ValidateName(name); err != nil {
+		fmt.Fprintf(stderr, "goforge new: %v\n", err)
+		return ExitUsage
+	}
+	if err := project.Create(name, name); err != nil {
+		if errors.Is(err, project.ErrDirExists) {
+			fmt.Fprintf(stderr, "goforge new: %v\n", err)
+			fmt.Fprintln(stderr, "pick another name or remove the existing directory")
+		} else {
+			fmt.Fprintf(stderr, "goforge new: %v\n", err)
+		}
+		return ExitError
+	}
+
+	fmt.Fprintf(stdout, "created project %q\n\n", name)
+	fmt.Fprintln(stdout, "next steps:")
+	fmt.Fprintf(stdout, "  cd %s\n", name)
+	fmt.Fprintln(stdout, "  go run ./cmd/server")
 	return ExitOK
 }

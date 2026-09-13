@@ -2,6 +2,8 @@ package cli
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -70,10 +72,10 @@ func TestRun(t *testing.T) {
 			wantErr:  []string{"exactly one project name"},
 		},
 		{
-			name:     "new with a name announces the plan",
-			args:     []string{"new", "user-service"},
-			wantCode: ExitOK,
-			wantOut:  []string{`"user-service"`},
+			name:     "invalid name is a usage error",
+			args:     []string{"new", "User"},
+			wantCode: ExitUsage,
+			wantErr:  []string{"lowercase"},
 		},
 		{
 			name:     "unknown command is a usage error on stderr",
@@ -115,5 +117,43 @@ func TestStreamsAreSeparated(t *testing.T) {
 	}
 	if !strings.Contains(errOut, "unknown command") {
 		t.Errorf("stderr = %q, want it to contain the error", errOut)
+	}
+}
+
+func TestNewCreatesProjectOnDisk(t *testing.T) {
+	// goforge new writes into the working directory, so run it inside a
+	// temp dir instead of the package directory. t.Chdir restores the
+	// original directory automatically (Go 1.24+).
+	t.Chdir(t.TempDir())
+
+	code, out, errOut := runCLI("new", "user-service")
+	if code != ExitOK {
+		t.Fatalf("exit code = %d, stderr = %q", code, errOut)
+	}
+	if !strings.Contains(out, "next steps") {
+		t.Errorf("stdout = %q, want next-step hints", out)
+	}
+	for _, want := range []string{
+		filepath.Join("user-service", "go.mod"),
+		filepath.Join("user-service", "cmd", "server", "main.go"),
+	} {
+		if _, err := os.Stat(want); err != nil {
+			t.Errorf("%s missing after goforge new: %v", want, err)
+		}
+	}
+}
+
+func TestNewRefusesExistingProject(t *testing.T) {
+	t.Chdir(t.TempDir())
+	if code, _, _ := runCLI("new", "user-service"); code != ExitOK {
+		t.Fatalf("first goforge new failed")
+	}
+
+	code, _, errOut := runCLI("new", "user-service")
+	if code != ExitError {
+		t.Errorf("second goforge new exit code = %d, want %d", code, ExitError)
+	}
+	if !strings.Contains(errOut, "already exists") {
+		t.Errorf("stderr = %q, want an exists message", errOut)
 	}
 }
