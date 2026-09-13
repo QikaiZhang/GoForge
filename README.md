@@ -48,6 +48,20 @@ git diff main...01-cli       # 5. 和参考实现对比，理解差异
 
 ```bash
 go build -o bin/goforge ./cmd/goforge
+# 构建期注入版本号（可选）
+go build -ldflags "-X goforge/internal/cli.version=v1.0.0" -o bin/goforge ./cmd/goforge
+```
+
+## 全部命令
+
+```bash
+goforge new user-service                     # 脚手架一个可运行的服务
+goforge generate handler user                # 追加 handler+service+repository 并接线
+goforge generate service order --force       # 单独生成某一层
+goforge dev --port 9090                      # go run ./cmd/server，Ctrl+C 优雅停止
+goforge test -- -run TestUser -v             # go test ./...，-- 后透传
+goforge git status                           # 组合 git CLI
+goforge version                              # 1.0.0
 ```
 
 ## 声明
