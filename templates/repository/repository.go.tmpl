@@ -1,0 +1,44 @@
+package repository
+
+import (
+	"context"
+	"errors"
+	"sync"
+
+	"{{.Module}}/internal/model"
+)
+
+// ErrNotFound is returned when a {{.Name}} does not exist.
+var ErrNotFound = errors.New("{{.Name}} not found")
+
+// {{.Pascal}}Repository is an in-memory data store for {{.Name}}
+// records. Swap it for a database-backed implementation behind the
+// same method set when the project outgrows it.
+type {{.Pascal}}Repository struct {
+	mu    sync.RWMutex
+	items map[string]model.{{.Pascal}}
+}
+
+// New{{.Pascal}}Repository returns an empty in-memory repository.
+func New{{.Pascal}}Repository() *{{.Pascal}}Repository {
+	return &{{.Pascal}}Repository{items: make(map[string]model.{{.Pascal}})}
+}
+
+// Save stores a {{.Name}} keyed by its ID.
+func (r *{{.Pascal}}Repository) Save(_ context.Context, m model.{{.Pascal}}) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.items[m.ID] = m
+	return nil
+}
+
+// Get returns the {{.Name}} with the given ID.
+func (r *{{.Pascal}}Repository) Get(_ context.Context, id string) (*model.{{.Pascal}}, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	m, ok := r.items[id]
+	if !ok {
+		return nil, ErrNotFound
+	}
+	return &m, nil
+}

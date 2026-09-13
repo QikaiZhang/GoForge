@@ -1,0 +1,21 @@
+# {{.Name}}
+
+A Go service scaffolded by [goforge](https://github.com/QikaiZhang/GoForge).
+
+## Run
+
+```bash
+go run ./cmd/server
+curl localhost:8080/healthz
+```
+
+## Layout
+
+```text
+cmd/server/          entry point
+internal/handler/    HTTP layer
+internal/service/    business rules
+internal/repository/ data access
+internal/model/      domain types
+configs/             runtime configuration
+```

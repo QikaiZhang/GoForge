@@ -1,8 +1,9 @@
 // Package project scaffolds new Go service skeletons.
 //
 // Create knows the filesystem layout of a generated project; the
-// content of every file lives next to it in this package so that the
-// whole "what does a goforge project look like" question has one home.
+// content of every file lives in templates/project and is rendered
+// through the template package. The template FS is injected so tests
+// can supply their own.
 package project
 
 import (
@@ -12,6 +13,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"goforge/internal/template"
 )
 
 // ErrDirExists is returned by Create when the target directory is
@@ -19,6 +22,12 @@ import (
 // friendlier message (and a different exit code) than a generic
 // filesystem failure.
 var ErrDirExists = errors.New("project directory already exists")
+
+// Data is the template data available to project templates.
+type Data struct {
+	// Name is the project name and the Go module name.
+	Name string
+}
 
 // scaffoldDirs are created empty. The layer directories start with a
 // .gitkeep because git does not track empty directories; real files
@@ -33,28 +42,25 @@ var scaffoldDirs = []string{
 	"configs",
 }
 
-// fileSpec is one file in the skeleton: path relative to the project
-// root and its content.
+// fileSpec is one rendered file in the skeleton: the path relative to
+// the project root and the template (relative to the template FS) it
+// is rendered from. An empty template name writes an empty file.
 type fileSpec struct {
-	path    string
-	content string
+	path string
+	tmpl string
 }
 
-// scaffoldFiles is the complete content of a new project, as literal
-// strings. (Known limitation, fixed in the template stage: embedding
-// Go source inside Go strings is awkward to maintain. It is good
-// enough for now and keeps this stage focused on filesystem work.)
 var scaffoldFiles = []fileSpec{
-	{"go.mod", goModContent},
-	{filepath.Join("cmd", "server", "main.go"), mainGoContent},
-	{filepath.Join("internal", "model", "model.go"), modelGoContent},
-	{filepath.Join("configs", "config.yaml"), configYamlContent},
+	{"go.mod", "project/go.mod.tmpl"},
+	{filepath.Join("cmd", "server", "main.go"), "project/main.go.tmpl"},
+	{filepath.Join("internal", "model", "model.go"), "project/model.go.tmpl"},
+	{filepath.Join("configs", "config.yaml"), "project/config.yaml.tmpl"},
 	{filepath.Join("api", ".gitkeep"), ""},
 	{filepath.Join("internal", "handler", ".gitkeep"), ""},
 	{filepath.Join("internal", "service", ".gitkeep"), ""},
 	{filepath.Join("internal", "repository", ".gitkeep"), ""},
-	{".gitignore", gitignoreContent},
-	{"README.md", readmeContent},
+	{".gitignore", "project/gitignore.tmpl"},
+	{"README.md", "project/README.md.tmpl"},
 }
 
 // ValidateName reports whether name can be used as a project (and
@@ -87,18 +93,11 @@ func ValidateName(name string) error {
 	return nil
 }
 
-// substitute fills the {{NAME}} placeholders in scaffold file contents.
-// Hand-rolled on purpose at this stage: when it grows painful, the
-// template stage replaces it with text/template.
-func substitute(content, name string) string {
-	return strings.ReplaceAll(content, "{{NAME}}", name)
-}
-
 // Create scaffolds a project skeleton rooted at dir. dir must not
-// exist; name becomes the Go module name. All filesystem work happens
-// after validation, so a failed Create never leaves a half-written
-// project behind (dirs are created last-second and files are small).
-func Create(dir, name string) error {
+// exist; name becomes the Go module name. templates is the FS the
+// project templates are rendered from (the embedded FS in production,
+// a fixture FS in tests).
+func Create(dir, name string, templates fs.FS) error {
 	if err := ValidateName(name); err != nil {
 		return err
 	}
@@ -109,14 +108,23 @@ func Create(dir, name string) error {
 		return fmt.Errorf("stat %s: %w", dir, err)
 	}
 
+	data := Data{Name: name}
+
 	for _, d := range scaffoldDirs {
 		if err := os.MkdirAll(filepath.Join(dir, d), 0o755); err != nil {
 			return fmt.Errorf("create directory %s: %w", d, err)
 		}
 	}
 	for _, f := range scaffoldFiles {
+		content := []byte{}
+		if f.tmpl != "" {
+			var err error
+			if content, err = template.Render(templates, f.tmpl, data); err != nil {
+				return fmt.Errorf("render %s: %w", f.tmpl, err)
+			}
+		}
 		path := filepath.Join(dir, f.path)
-		if err := os.WriteFile(path, []byte(substitute(f.content, name)), 0o644); err != nil {
+		if err := os.WriteFile(path, content, 0o644); err != nil {
 			return fmt.Errorf("write %s: %w", f.path, err)
 		}
 	}

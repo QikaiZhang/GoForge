@@ -10,6 +10,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 
 	"goforge/internal/project"
 )
@@ -25,7 +27,7 @@ const (
 // version is overridden at build time with:
 //
 //	go build -ldflags "-X goforge/internal/cli.version=v1.2.3"
-var version = "0.2.0"
+var version = "0.3.0"
 
 const usage = `goforge is a scaffold for Go backend services.
 
@@ -81,7 +83,11 @@ func runNew(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "goforge new: %v\n", err)
 		return ExitUsage
 	}
-	if err := project.Create(name, name); err != nil {
+	// V1: templates are read from ./templates relative to the working
+	// directory. This couples the binary to the source checkout — the
+	// embedding commit in this stage fixes it.
+	templates := os.DirFS(filepath.Join(".", "templates"))
+	if err := project.Create(name, name, templates); err != nil {
 		if errors.Is(err, project.ErrDirExists) {
 			fmt.Fprintf(stderr, "goforge new: %v\n", err)
 			fmt.Fprintln(stderr, "pick another name or remove the existing directory")

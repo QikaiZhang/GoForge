@@ -2,12 +2,21 @@ package project
 
 import (
 	"errors"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+// realTemplates points at the repository's template directory; `go
+// test` runs with the package directory as cwd, so the relative path
+// is stable. Tests that need synthetic templates use testing/fstest
+// instead (see internal/template).
+func realTemplates() fs.FS {
+	return os.DirFS(filepath.Join("..", "..", "templates"))
+}
 
 func TestValidateName(t *testing.T) {
 	tests := []struct {
@@ -45,7 +54,7 @@ func TestCreateScaffoldsProject(t *testing.T) {
 	root := t.TempDir()
 	dir := filepath.Join(root, "user-service")
 
-	if err := Create(dir, "user-service"); err != nil {
+	if err := Create(dir, "user-service", realTemplates()); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 
@@ -89,7 +98,7 @@ func TestCreateRefusesExistingDirectory(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err := Create(dir, "user-service")
+	err := Create(dir, "user-service", realTemplates())
 	if !errors.Is(err, ErrDirExists) {
 		t.Errorf("Create error = %v, want ErrDirExists", err)
 	}
@@ -103,7 +112,7 @@ func TestCreateReportsPermissionErrors(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chmod(cage, 0o755) }) // let TempDir cleanup delete it
 
-	err := Create(filepath.Join(cage, "user-service"), "user-service")
+	err := Create(filepath.Join(cage, "user-service"), "user-service", realTemplates())
 	if err == nil {
 		t.Fatal("Create in read-only parent should fail")
 	}
@@ -124,7 +133,7 @@ func TestCreatedProjectCompiles(t *testing.T) {
 	}
 
 	dir := filepath.Join(t.TempDir(), "user-service")
-	if err := Create(dir, "user-service"); err != nil {
+	if err := Create(dir, "user-service", realTemplates()); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 

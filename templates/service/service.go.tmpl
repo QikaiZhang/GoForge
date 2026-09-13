@@ -1,0 +1,47 @@
+package service
+
+import (
+	"context"
+	"fmt"
+
+	"{{.Module}}/internal/model"
+)
+
+// Repository is the storage contract that {{.Pascal}}Service depends
+// on. Declaring it here (consumer side) means the service never imports
+// the repository package and can be unit-tested with a fake.
+type Repository interface {
+	Save(ctx context.Context, m model.{{.Pascal}}) error
+	Get(ctx context.Context, id string) (*model.{{.Pascal}}, error)
+}
+
+// {{.Pascal}}Service contains the business rules for {{.Name}} records.
+type {{.Pascal}}Service struct {
+	repo Repository
+}
+
+// New{{.Pascal}}Service wires the service to a Repository implementation.
+func New{{.Pascal}}Service(r Repository) *{{.Pascal}}Service {
+	return &{{.Pascal}}Service{repo: r}
+}
+
+// Create validates and stores a new {{.Name}}.
+func (s *{{.Pascal}}Service) Create(ctx context.Context, id, name string) (*model.{{.Pascal}}, error) {
+	if name == "" {
+		return nil, fmt.Errorf("{{.Name}}: name must not be empty")
+	}
+	m := model.{{.Pascal}}{ID: id, Name: name}
+	if err := s.repo.Save(ctx, m); err != nil {
+		return nil, fmt.Errorf("save {{.Name}}: %w", err)
+	}
+	return &m, nil
+}
+
+// Get fetches a {{.Name}} by ID.
+func (s *{{.Pascal}}Service) Get(ctx context.Context, id string) (*model.{{.Pascal}}, error) {
+	m, err := s.repo.Get(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("get {{.Name}}: %w", err)
+	}
+	return m, nil
+}
